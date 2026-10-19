@@ -1,0 +1,374 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>附录 B 合成实验 / Appendix B Synthetic Experiment</title><style>
+:root{color-scheme:light;--ink:#1f2937;--muted:#5b6573;--line:#d9dee7;--blue:#2457a7;--paper:#fff;--wash:#f5f7fa}
+*{box-sizing:border-box}body{margin:0;background:var(--wash);color:var(--ink);font:16px/1.62 system-ui,-apple-system,"Segoe UI","Noto Sans CJK SC",sans-serif}
+main{max-width:1000px;margin:28px auto;padding:40px 52px;background:var(--paper);box-shadow:0 2px 14px #15243b14;border-radius:12px}
+h1,h2,h3,h4{line-height:1.25;margin:1.5em 0 .6em}h1{margin-top:0;color:#17365f;border-bottom:2px solid var(--line);padding-bottom:.45em}h2{border-bottom:1px solid var(--line);padding-bottom:.3em}a{color:var(--blue)}p,li{max-width:88ch}blockquote{border-left:4px solid #9cb6dc;padding:.3em 1em;color:var(--muted);margin-left:0}
+pre{overflow:auto;background:#f2f4f8;border:1px solid var(--line);border-radius:7px;padding:14px;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:#f0f2f5;padding:.08em .28em;border-radius:4px}.cell{border:1px solid var(--line);border-radius:8px;margin:16px 0;overflow:hidden}.cell-label{font-size:12px;color:var(--muted);background:#f7f8fa;padding:5px 12px;border-bottom:1px solid var(--line)}.cell pre{margin:0;border:0;border-radius:0}.output{padding:12px 16px;border-top:1px solid var(--line);overflow:auto}.output table{border-collapse:collapse;font-size:14px}.output th,.output td{border:1px solid var(--line);padding:5px 8px;text-align:left}.output img{max-width:100%;height:auto;display:block;margin:8px auto}.toc{display:flex;gap:12px;flex-wrap:wrap}.card{display:block;padding:16px;border:1px solid var(--line);border-radius:8px;background:white;text-decoration:none}.note{color:var(--muted);font-size:14px}footer{margin-top:36px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+@media(max-width:700px){main{margin:0;padding:22px 16px;border-radius:0}body{font-size:15px}}
+</style></head><body><main><p><a href="index.html">← Project home</a></p><h1>附录 B 合成实验：E2E 决策学习的可复现练习</h1><h1>附录 B 合成实验：E2E 决策学习的可复现练习</h1>
+<p>本笔记本先复现论文附录 B 的合成数据机制和三类方法比较：事后最优标签（OPT）、端到端线性决策模型（E2E）、以及两种“先预测后优化”（PTO）基线。目标是学习动态规划标签、决策损失与时间序列实验设计。</p>
+<p><strong>复现边界</strong>：需求/交期生成机制、参数和方法结构依据论文附录 B。作者数据包和原始 JD 数据当前不可用；论文未完整公开随机种子及全部实现细节。本笔记本因此报告可复查的合成实验结果，不声称逐位重现论文表 5–7。为了让单次订单决策可独立评估，本教学实现将每个复核时点作为独立情景，并将初始库存设为 0；完整的多周期库存状态耦合和 M5 扩展放在后续阶段。</p>
+<h2>1. 研究问题与方法</h2>
+<p><strong>研究问题</strong>：当需求和供应商交期都不确定时，直接学习订货量，是否能比先分别预测需求/交期再套用订货规则，更好地降低库存成本？</p>
+<p>附录 B 的生成式为：</p>
+<ul>
+<li>每个决策样本有四个独立特征 <code>x1, x2, z1, z2</code>，均匀取自 <code>{1, 2, 3, 4}</code>。</li>
+<li>日需求 <code>d_t = x1 + x2 + ε_t</code>，其中 <code>ε_t ~ Normal(0, σ_d²)</code>。</li>
+<li>交期 <code>L = z1 + z2 + ξ</code>；<code>ξ</code> 取 <code>-1, 0, 1</code>，<code>P(ξ=0)=p0</code>，其余概率均分给 <code>-1</code> 与 <code>+1</code>。</li>
+<li>复核周期 <code>R=5</code>，成本参数 <code>h=0.1, b=0.9</code>，所以缺货单位成本是持有单位成本的 9 倍。保护期长度按 <code>L + ceil(bR/(b+h))</code> 构造。</li>
+<li>事后标签按论文定理形式计算：<code>a* = max(累计保护期需求 - 初始库存, 0)</code>。</li>
+</ul>
+<p>E2E 直接回归 <code>a*</code>；PTO1 用 KNN 估计保护期累计需求的条件分布并取 <code>b/(b+h)</code> 分位数；PTO2 分别回归日需求和交期，再代入保护期订货规则。OPT 是利用该测试情景未来实现值按论文标签规则算出的事后参照，不可在下单时使用；由于本教学实现简化了多周期状态，不把它宣称为完整库存系统的严格成本下界。</p>
+<section class="cell"><div class="cell-label">In [1]</div><pre><code>import math
+import numpy as np
+import pandas as pd
+
+SEED = 20261017
+N_SKUS = 100
+TRAIN_SKUS = 80
+R = 5
+HOLDING_COST = 0.1
+STOCKOUT_COST = 0.9
+CRITICAL_RATIO = STOCKOUT_COST / (STOCKOUT_COST + HOLDING_COST)
+COVER_DAYS = math.ceil(CRITICAL_RATIO * R)
+K_KNN = 50
+
+print({
+    &quot;skus&quot;: N_SKUS, &quot;train_skus&quot;: TRAIN_SKUS, &quot;review_period&quot;: R,
+    &quot;h&quot;: HOLDING_COST, &quot;b&quot;: STOCKOUT_COST,
+    &quot;critical_ratio&quot;: CRITICAL_RATIO, &quot;coverage_days&quot;: COVER_DAYS,
+    &quot;PTO1_K&quot;: K_KNN, &quot;base_seed&quot;: SEED,
+})</code></pre>
+<div class="output"><pre>{&#x27;skus&#x27;: 100, &#x27;train_skus&#x27;: 80, &#x27;review_period&#x27;: 5, &#x27;h&#x27;: 0.1, &#x27;b&#x27;: 0.9, &#x27;critical_ratio&#x27;: 0.9, &#x27;coverage_days&#x27;: 5, &#x27;PTO1_K&#x27;: 50, &#x27;base_seed&#x27;: 20261017}
+</pre></div>
+</section>
+<h2>2. 先检查理论标签的成本逻辑</h2>
+<p>对一个确定的库存覆盖区间，公式中的持有成本和缺货成本是分段线性的。下面用小型整数例子，将论文阈值规则与穷举搜索得到的最低成本订货量对照，检查实现中的符号、正部函数和临界分位点。</p>
+<section class="cell"><div class="cell-label">In [2]</div><pre><code>def interval_cost(order_qty, daily_demand, initial_inventory, h, b):
+    stock = float(initial_inventory) + float(order_qty)
+    total = 0.0
+    for demand in daily_demand:
+        stock -= float(demand)
+        total += h * max(stock, 0.0) + b * max(-stock, 0.0)
+    return total
+
+def theorem_order_label(daily_demand, initial_inventory, h, b):
+    n_days = len(daily_demand)
+    threshold_day = math.ceil((b / (b + h)) * n_days)
+    cumulative = float(np.sum(daily_demand[:threshold_day]))
+    return max(cumulative - float(initial_inventory), 0.0)
+
+def brute_force_integer_order(daily_demand, initial_inventory, h, b):
+    upper = max(0, int(math.ceil(np.sum(daily_demand) + abs(initial_inventory) + 5)))
+    candidates = np.arange(upper + 1, dtype=float)
+    costs = np.array([interval_cost(q, daily_demand, initial_inventory, h, b) for q in candidates])
+    return float(candidates[np.argmin(costs)]), float(costs.min())
+
+example_demand = np.array([2, 1, 3, 2, 1])
+example_stock = 2
+rule_q = theorem_order_label(example_demand, example_stock, HOLDING_COST, STOCKOUT_COST)
+search_q, search_cost = brute_force_integer_order(example_demand, example_stock, HOLDING_COST, STOCKOUT_COST)
+print({&quot;demand&quot;: example_demand.tolist(), &quot;initial_stock&quot;: example_stock, &quot;theorem_q&quot;: rule_q, &quot;grid_search_q&quot;: search_q, &quot;grid_search_cost&quot;: search_cost})
+assert rule_q == search_q, &quot;阈值标签与穷举成本最小值不一致&quot;</code></pre>
+<div class="output"><pre>{&#x27;demand&#x27;: [2, 1, 3, 2, 1], &#x27;initial_stock&#x27;: 2, &#x27;theorem_q&#x27;: 7.0, &#x27;grid_search_q&#x27;: 7.0, &#x27;grid_search_cost&#x27;: 1.7000000000000004}
+</pre></div>
+</section>
+<h2>3. 生成附录 B 风格的合成订单情景</h2>
+<p>每个 SKU 在每个复核周期产生一个独立的决策情景。为与论文明确参数对齐，默认 <code>a1=a2=b1=b2=1</code>。为了让各方法在同一批情景上公平比较，先生成测试情景中的整段未来需求；这些未来值只用于构造训练标签和事后成本，不作为模型输入。</p>
+<section class="cell"><div class="cell-label">In [3]</div><pre><code>def generate_scenarios(seed, horizon_days, sigma_d2=1.0, p0=1/3, n_skus=N_SKUS, review_period=R):
+    rng = np.random.default_rng(seed)
+    n_reviews = horizon_days // review_period
+    if horizon_days % review_period != 0:
+        raise ValueError(&quot;horizon_days 必须是 review_period 的整数倍&quot;)
+    rows = []
+    for sku in range(n_skus):
+        for review_idx in range(n_reviews):
+            x1, x2, z1, z2 = rng.integers(1, 5, size=4)
+            xi = rng.choice(np.array([-1, 0, 1]), p=np.array([(1-p0)/2, p0, (1-p0)/2]))
+            lead_time = int(z1 + z2 + xi)
+            if lead_time &lt;= 0:
+                raise ValueError(&quot;交期必须为正&quot;)
+            protection_days = lead_time + COVER_DAYS
+            mean_daily_demand = float(x1 + x2)
+            daily_demand = mean_daily_demand + rng.normal(0.0, math.sqrt(sigma_d2), size=protection_days)
+            initial_inventory = 0.0
+            oracle_order = max(float(daily_demand.sum()) - initial_inventory, 0.0)
+            rows.append({
+                &quot;sku&quot;: sku, &quot;review_idx&quot;: review_idx, &quot;x1&quot;: int(x1), &quot;x2&quot;: int(x2),
+                &quot;z1&quot;: int(z1), &quot;z2&quot;: int(z2), &quot;xi&quot;: int(xi), &quot;lead_time&quot;: lead_time,
+                &quot;protection_days&quot;: protection_days, &quot;mean_daily_demand&quot;: mean_daily_demand,
+                &quot;realized_daily_average&quot;: float(daily_demand.mean()),
+                &quot;initial_inventory&quot;: initial_inventory, &quot;oracle_order&quot;: oracle_order,
+                &quot;total_protection_demand&quot;: float(daily_demand.sum()),
+                &quot;daily_demand&quot;: daily_demand.astype(float),
+            })
+    return pd.DataFrame(rows)
+
+example_data = generate_scenarios(SEED, horizon_days=30)
+print(&quot;情景数:&quot;, len(example_data), &quot;| SKU 数:&quot;, example_data.sku.nunique())
+print(&quot;交期范围:&quot;, (example_data.lead_time.min(), example_data.lead_time.max()))
+print(&quot;保护期需求均值:&quot;, round(example_data.total_protection_demand.mean(), 2))
+print(example_data[[&quot;sku&quot;, &quot;review_idx&quot;, &quot;x1&quot;, &quot;x2&quot;, &quot;z1&quot;, &quot;z2&quot;, &quot;lead_time&quot;, &quot;protection_days&quot;, &quot;oracle_order&quot;]].head().to_string(index=False))
+assert len(example_data) == N_SKUS * (30 // R)</code></pre>
+<div class="output"><pre>情景数: 600 | SKU 数: 100
+交期范围: (np.int64(1), np.int64(9))
+保护期需求均值: 49.45
+ sku  review_idx  x1  x2  z1  z2  lead_time  protection_days  oracle_order
+   0           0   4   4   3   3          7               12     99.587728
+   0           1   1   3   3   4          6               11     38.296871
+   0           2   3   2   4   3          7               12     59.460814
+   0           3   3   1   4   2          6               11     43.674750
+   0           4   1   4   1   3          3                8     39.654739
+</pre></div>
+</section>
+<h2>4. 拟合 E2E 与 PTO 对照方法</h2>
+<p>为了隔离“直接学习决策”与“分别预测再优化”的差异，三种方法使用相同训练 SKU 和相同测试情景。训练/测试按 SKU 分组，避免同一个 SKU 的订单情景同时进入训练集和测试集。论文没有在附录 B 明确给出这个切分细节，因此这里把 80/20 分组切分作为显式复现约定。</p>
+<section class="cell"><div class="cell-label">In [4]</div><pre><code>def ols_fit(features, target, intercept=True):
+    x = np.asarray(features, dtype=float)
+    y = np.asarray(target, dtype=float)
+    if intercept:
+        x = np.column_stack([np.ones(len(x)), x])
+    return np.linalg.lstsq(x, y, rcond=None)[0]
+
+def ols_predict(features, beta, intercept=True):
+    x = np.asarray(features, dtype=float)
+    if intercept:
+        x = np.column_stack([np.ones(len(x)), x])
+    return x @ beta
+
+def fit_and_predict_methods(data, train_skus=TRAIN_SKUS, k=K_KNN):
+    train = data[data.sku &lt; train_skus].reset_index(drop=True)
+    test = data[data.sku &gt;= train_skus].reset_index(drop=True)
+    covariates = [&quot;x1&quot;, &quot;x2&quot;, &quot;z1&quot;, &quot;z2&quot;]
+    x_train = train[covariates].to_numpy(dtype=float)
+    x_test = test[covariates].to_numpy(dtype=float)
+
+    # E2E：直接拟合事后最优订货标签，含需求-交期交互项。
+    e2e_train = np.column_stack([
+        train.x1, train.x2, train.x1*train.z1, train.x1*train.z2,
+        train.x2*train.z1, train.x2*train.z2,
+    ])
+    e2e_test = np.column_stack([
+        test.x1, test.x2, test.x1*test.z1, test.x1*test.z2,
+        test.x2*test.z1, test.x2*test.z2,
+    ])
+    beta_e2e = ols_fit(e2e_train, train.oracle_order, intercept=False)
+    pred_e2e = np.maximum(ols_predict(e2e_test, beta_e2e, intercept=False), 0.0)
+
+    # PTO2：点预测日需求与交期，再按 protection_days 规则订货。
+    demand_features_train = train[[&quot;x1&quot;, &quot;x2&quot;]].to_numpy(dtype=float)
+    demand_features_test = test[[&quot;x1&quot;, &quot;x2&quot;]].to_numpy(dtype=float)
+    beta_demand = ols_fit(demand_features_train, train.realized_daily_average, intercept=True)
+    pred_daily_demand = np.maximum(ols_predict(demand_features_test, beta_demand, intercept=True), 0.0)
+    lead_features_train = train[[&quot;z1&quot;, &quot;z2&quot;]].to_numpy(dtype=float)
+    lead_features_test = test[[&quot;z1&quot;, &quot;z2&quot;]].to_numpy(dtype=float)
+    beta_lead = ols_fit(lead_features_train, train.lead_time, intercept=True)
+    pred_lead = np.maximum(ols_predict(lead_features_test, beta_lead, intercept=True), 1.0)
+    pred_pto2 = np.maximum(
+        pred_daily_demand * (pred_lead + COVER_DAYS) - test.initial_inventory.to_numpy(dtype=float), 0.0
+    )
+
+    # PTO1：KNN 近邻上的保护期累计需求经验分布，再取临界分位数。
+    scale = x_train.std(axis=0)
+    scale[scale == 0] = 1.0
+    standardized_train = (x_train - x_train.mean(axis=0)) / scale
+    standardized_test = (x_test - x_train.mean(axis=0)) / scale
+    train_total = train.total_protection_demand.to_numpy(dtype=float)
+    pred_pto1 = np.empty(len(test), dtype=float)
+    for i, row in enumerate(standardized_test):
+        distances = np.sum((standardized_train - row) ** 2, axis=1)
+        nearest = np.argpartition(distances, min(k-1, len(distances)-1))[:min(k, len(distances))]
+        demand_quantile = np.quantile(train_total[nearest], CRITICAL_RATIO)
+        pred_pto1[i] = max(float(demand_quantile) - float(test.initial_inventory.iloc[i]), 0.0)
+
+    predictions = {
+        &quot;OPT (oracle)&quot;: test.oracle_order.to_numpy(dtype=float),
+        &quot;E2E linear&quot;: pred_e2e,
+        &quot;PTO1 KNN quantile&quot;: pred_pto1,
+        &quot;PTO2 point forecast&quot;: pred_pto2,
+    }
+    diagnostics = {
+        &quot;test_demand_MAE&quot;: float(np.mean(np.abs(pred_daily_demand - test.realized_daily_average.to_numpy(dtype=float)))),
+        &quot;test_lead_time_MAE&quot;: float(np.mean(np.abs(pred_lead - test.lead_time.to_numpy(dtype=float)))),
+    }
+    return test, predictions, diagnostics
+
+test_preview, prediction_preview, diagnostic_preview = fit_and_predict_methods(example_data)
+print(&quot;测试订单数:&quot;, len(test_preview))
+print(&quot;需求/交期诊断:&quot;, diagnostic_preview)
+print(&quot;各方法平均订货量:&quot;, {name: round(float(np.mean(q)), 2) for name, q in prediction_preview.items()})</code></pre>
+<div class="output"><pre>测试订单数: 120
+需求/交期诊断: {&#x27;test_demand_MAE&#x27;: 0.23752283811223723, &#x27;test_lead_time_MAE&#x27;: 0.7109405948824642}
+各方法平均订货量: {&#x27;OPT (oracle)&#x27;: 49.33, &#x27;E2E linear&#x27;: 49.5, &#x27;PTO1 KNN quantile&#x27;: 64.12, &#x27;PTO2 point forecast&#x27;: 49.67}
+</pre></div>
+</section>
+<h2>5. 用同一组真实情景计算库存成本</h2>
+<p>每个订单情景中，订货在随机交期后到达；到货前的未满足需求形成欠交，到货后先用到货量抵消欠交，再满足当日需求。每天分别累计持有成本与缺货成本。OPT 使用未来实现值计算订货标签，作为 oracle 下界参考；可部署的方法只能使用特征做预测。</p>
+<section class="cell"><div class="cell-label">In [5]</div><pre><code>def simulate_episode_cost(daily_demand, lead_time, order_qty, h=HOLDING_COST, b=STOCKOUT_COST):
+    stock = 0.0
+    holding = 0.0
+    stockout = 0.0
+    for day, demand in enumerate(daily_demand):
+        if day == int(lead_time):
+            stock += float(order_qty)
+        stock -= float(demand)
+        holding += h * max(stock, 0.0)
+        stockout += b * max(-stock, 0.0)
+    return holding, stockout, holding + stockout
+
+def evaluate_horizon(seed, horizon_days, sigma_d2=1.0, p0=1/3):
+    data = generate_scenarios(seed, horizon_days=horizon_days, sigma_d2=sigma_d2, p0=p0)
+    test, predictions, diagnostics = fit_and_predict_methods(data)
+    cost_rows = []
+    for method, orders in predictions.items():
+        for i, row in test.iterrows():
+            holding, stockout, total = simulate_episode_cost(
+                row.daily_demand, row.lead_time, orders[i]
+            )
+            cost_rows.append({&quot;method&quot;: method, &quot;sku&quot;: int(row.sku), &quot;holding&quot;: holding, &quot;stockout&quot;: stockout, &quot;total&quot;: total})
+    per_sku = pd.DataFrame(cost_rows).groupby([&quot;method&quot;, &quot;sku&quot;], as_index=False)[[&quot;holding&quot;, &quot;stockout&quot;, &quot;total&quot;]].sum()
+    summary = per_sku.groupby(&quot;method&quot;)[[&quot;holding&quot;, &quot;stockout&quot;, &quot;total&quot;]].mean().reset_index()
+    summary[&quot;horizon_days&quot;] = horizon_days
+    summary[&quot;seed&quot;] = seed
+    summary[&quot;sigma_d2&quot;] = sigma_d2
+    summary[&quot;p0&quot;] = p0
+    return summary, diagnostics
+
+preview_summary, preview_diagnostics = evaluate_horizon(SEED, 30)
+print(preview_summary.round(2).to_string(index=False))
+print(&quot;Prediction diagnostics:&quot;, preview_diagnostics)</code></pre>
+<div class="output"><pre>             method  holding  stockout  total  horizon_days     seed  sigma_d2   p0
+         E2E linear    31.48    446.72 478.20            30 20261017       1.0 0.33
+       OPT (oracle)    29.50    433.57 463.07            30 20261017       1.0 0.33
+  PTO1 KNN quantile    73.94    434.15 508.09            30 20261017       1.0 0.33
+PTO2 point forecast    31.88    445.77 477.65            30 20261017       1.0 0.33
+Prediction diagnostics: {&#x27;test_demand_MAE&#x27;: 0.23752283811223723, &#x27;test_lead_time_MAE&#x27;: 0.7109405948824642}
+</pre></div>
+</section>
+<h2>6. 主实验：不同规划期的重复情景</h2>
+<p>论文比较 <code>T=30, 40, 50</code> 天。下面对每个规划期重复多个随机种子，汇总每个测试 SKU 的累计持有、缺货和总成本。报告均值与标准差，减少单次随机生成造成的偶然性。</p>
+<section class="cell"><div class="cell-label">In [6]</div><pre><code>REPLICATION_SEEDS = range(10)
+HORIZONS = [30, 40, 50]
+
+replication_rows = []
+forecast_rows = []
+for horizon in HORIZONS:
+    for seed in REPLICATION_SEEDS:
+        summary, diagnostics = evaluate_horizon(SEED + seed, horizon)
+        replication_rows.append(summary)
+        forecast_rows.append({&quot;horizon_days&quot;: horizon, &quot;seed&quot;: SEED + seed, **diagnostics})
+replication_results = pd.concat(replication_rows, ignore_index=True)
+forecast_diagnostics = pd.DataFrame(forecast_rows)
+
+main_summary = (
+    replication_results.groupby([&quot;horizon_days&quot;, &quot;method&quot;])[[&quot;holding&quot;, &quot;stockout&quot;, &quot;total&quot;]]
+    .agg([&quot;mean&quot;, &quot;std&quot;])
+    .round(2)
+)
+print(main_summary.to_string())
+print(&quot;\n测试集需求/交期预测误差（PTO2）&quot;)
+print(forecast_diagnostics.groupby(&quot;horizon_days&quot;)[[&quot;test_demand_MAE&quot;, &quot;test_lead_time_MAE&quot;]].mean().round(3).to_string())</code></pre>
+<div class="output"><pre>                                 holding       stockout          total       
+                                    mean   std     mean    std    mean    std
+horizon_days method                                                          
+30           E2E linear            31.56  0.83   469.98  26.39  501.53  25.75
+             OPT (oracle)          30.08  0.37   455.58  25.08  485.66  25.15
+             PTO1 KNN quantile     74.54  2.41   456.67  25.65  531.21  24.55
+             PTO2 point forecast   31.52  0.92   470.03  26.51  501.55  25.91
+40           E2E linear            42.45  1.97   617.42  21.56  659.87  20.13
+             OPT (oracle)          39.71  0.68   598.32  19.99  638.03  20.07
+             PTO1 KNN quantile     96.68  2.94   599.28  20.32  695.95  18.04
+             PTO2 point forecast   42.36  2.00   617.55  21.57  659.91  20.12
+50           E2E linear            52.68  1.98   757.67  33.72  810.35  33.04
+             OPT (oracle)          49.39  1.03   734.51  31.45  783.90  31.89
+             PTO1 KNN quantile    117.62  3.10   735.89  31.95  853.52  31.08
+             PTO2 point forecast   52.59  2.16   757.77  34.08  810.36  33.25
+
+测试集需求/交期预测误差（PTO2）
+              test_demand_MAE  test_lead_time_MAE
+horizon_days                                     
+30                      0.254               0.684
+40                      0.256               0.698
+50                      0.257               0.680
+</pre></div>
+</section>
+<section class="cell"><div class="cell-label">In [7]</div><pre><code>try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None
+
+if plt is not None:
+    plot_data = replication_results.groupby([&quot;horizon_days&quot;, &quot;method&quot;], as_index=False).total.mean()
+    fig, ax = plt.subplots(figsize=(8, 4.8))
+    for method, group in plot_data.groupby(&quot;method&quot;):
+        group = group.sort_values(&quot;horizon_days&quot;)
+        ax.plot(group.horizon_days, group.total, marker=&quot;o&quot;, label=method)
+    ax.set(title=&quot;合成情景：规划期与每 SKU 累计总成本&quot;, xlabel=&quot;规划期 T（天）&quot;, ylabel=&quot;平均总成本 / 测试 SKU&quot;)
+    ax.grid(alpha=0.25)
+    ax.legend(frameon=False)
+    plt.show()
+else:
+    print(&quot;未安装 matplotlib；表格结果仍可复核。Colab 默认环境可直接绘图。&quot;)</code></pre>
+<div class="output"><pre>未安装 matplotlib；表格结果仍可复核。Colab 默认环境可直接绘图。
+</pre></div>
+</section>
+<h2>7. 稳健性练习：需求与交期不确定性</h2>
+<p>论文附录 B 分别改变需求噪声方差和交期噪声方差。对本生成器，<code>Var(ξ)=1-p0</code>，所以 <code>p0={0.6, 0.4, 0.2}</code> 对应交期噪声方差 <code>{0.4, 0.6, 0.8}</code>。主结果之外，再观察不确定性增大时成本和方法排序是否变化。</p>
+<section class="cell"><div class="cell-label">In [8]</div><pre><code>sensitivity_rows = []
+SENSITIVITY_SEEDS = range(5)
+for sigma_d2 in [0.05, 1.0, 2.25]:
+    for seed in SENSITIVITY_SEEDS:
+        summary, _ = evaluate_horizon(SEED + 1000 + seed, 40, sigma_d2=sigma_d2, p0=1/3)
+        sensitivity_rows.append(summary)
+for p0 in [0.6, 0.4, 0.2]:
+    for seed in SENSITIVITY_SEEDS:
+        summary, _ = evaluate_horizon(SEED + 2000 + seed, 40, sigma_d2=1.0, p0=p0)
+        sensitivity_rows.append(summary)
+sensitivity_results = pd.concat(sensitivity_rows, ignore_index=True)
+sensitivity_summary = (
+    sensitivity_results.groupby([&quot;sigma_d2&quot;, &quot;p0&quot;, &quot;method&quot;])[[&quot;total&quot;]]
+    .mean().round(2).reset_index()
+)
+print(sensitivity_summary.to_string(index=False))</code></pre>
+<div class="output"><pre> sigma_d2       p0              method  total
+     0.05 0.333333          E2E linear 632.82
+     0.05 0.333333        OPT (oracle) 616.97
+     0.05 0.333333   PTO1 KNN quantile 672.58
+     0.05 0.333333 PTO2 point forecast 632.54
+     1.00 0.200000          E2E linear 646.97
+     1.00 0.200000        OPT (oracle) 623.40
+     1.00 0.200000   PTO1 KNN quantile 680.93
+     1.00 0.200000 PTO2 point forecast 646.78
+     1.00 0.333333          E2E linear 641.97
+     1.00 0.333333        OPT (oracle) 618.54
+     1.00 0.333333   PTO1 KNN quantile 676.39
+     1.00 0.333333 PTO2 point forecast 641.62
+     1.00 0.400000          E2E linear 642.26
+     1.00 0.400000        OPT (oracle) 622.92
+     1.00 0.400000   PTO1 KNN quantile 678.65
+     1.00 0.400000 PTO2 point forecast 642.23
+     1.00 0.600000          E2E linear 673.23
+     1.00 0.600000        OPT (oracle) 655.51
+     1.00 0.600000   PTO1 KNN quantile 711.32
+     1.00 0.600000 PTO2 point forecast 673.28
+     2.25 0.333333          E2E linear 650.54
+     2.25 0.333333        OPT (oracle) 619.69
+     2.25 0.333333   PTO1 KNN quantile 680.39
+     2.25 0.333333 PTO2 point forecast 650.14
+</pre></div>
+</section>
+<h2>8. 当前结果与复现边界</h2>
+<p>本地用 10 个随机种子顺序执行后的平均总成本（每个测试 SKU）为：T=30 时 E2E 501.53、PTO2 501.55、PTO1 531.21；T=40 时 E2E 659.87、PTO2 659.91、PTO1 695.95；T=50 时 E2E 810.35、PTO2 810.36、PTO1 853.52。这里 E2E 与 PTO2 几乎持平，不能据此声称复现了论文中 E2E 明显优于 PTO 的结果。需求与交期的条件关系在本合成设定里很简单，PTO2 能较好地恢复预测量；独立订单情景也没有让早期订货影响之后的库存状态。</p>
+<p>读结果时先看三件事：</p>
+<ol>
+<li><strong>成本而非只看预测误差</strong>：PTO2 的需求/交期 MAE 不直接等于订货决策质量。</li>
+<li><strong>oracle 的作用</strong>：OPT 使用未来实现值生成事后标签，只是参考，不是可部署预测器，也不在本简化评估中保证为严格成本下界。</li>
+<li><strong>随机性</strong>：比较 10 个种子的均值和离散程度；不要只挑一个让 E2E 表现最好的种子。</li>
+</ol>
+<p>本实现与论文完整多周期库存系统的差别是：每个复核时点的订单情景独立评估，初始库存固定为零，因而未模拟相邻订单之间的库存状态传递或到货交叉。该差异会影响成本绝对值和方法排序。下一步应先补上多周期库存状态传递与到货时序，再判断与论文表 5–7 的差异；之后接入公开 M5 销量，把交期情景作为明确的模拟假设，并训练论文主文的神经网络结构。</p><section class="english-companion"><h2>English Version — Appendix B Synthetic Experiment</h2>
+<p>This notebook implements a reproducible synthetic exercise inspired by Appendix B. It compares an oracle benchmark (OPT), a direct end-to-end decision model (E2E), and two predict-then-optimize baselines (PTO1 and PTO2). The aim is to study decision labels, inventory costs, and experimental design; the results are not a claim of exact replication of the paper’s Tables 5–7.</p>
+<h3>Research question and data-generating process</h3><p>When demand and supplier lead time are uncertain, can directly learning an order quantity reduce inventory cost more than forecasting demand and lead time separately and then applying a replenishment rule?</p><ul><li>Four independent covariates x1, x2, z1, and z2 are sampled uniformly from {1, 2, 3, 4}.</li><li>Daily demand is d_t = x1 + x2 + ε_t, where ε_t follows a normal distribution with variance σ_d².</li><li>Lead time is L = z1 + z2 + ξ, where ξ is −1, 0, or 1; P(ξ=0)=p0 and the remaining probability is split equally between −1 and 1.</li><li>The review period is R=5 days; holding cost h=0.1 and stockout cost b=0.9. The critical ratio is b/(b+h)=0.9, and protection length follows the paper’s rule.</li><li>The oracle order label is a* = max(cumulative protection-period demand − initial inventory, 0).</li></ul>
+<h3>Policies and evaluation</h3><p>E2E directly regresses the oracle order label. PTO1 uses K-nearest neighbors to estimate the conditional distribution of protection-period demand and selects its 90th percentile. PTO2 forecasts demand and lead time separately, then applies the protection-period order rule. OPT uses future realized values and is unavailable at decision time; it is an oracle reference, not a deployable policy. All policies share the same training SKUs and test scenarios, with an 80/20 split by SKU to prevent the same SKU appearing in both sets.</p><p>For each test scenario, an order arrives after its realized lead time. Unmet demand accumulates as backlog; arrivals first reduce backlog, then serve current demand. Holding and stockout costs are accumulated daily. The implementation checks one small integer example against exhaustive search: both the theorem rule and grid search select order quantity 7, with cost 1.7.</p>
+<h3>Results and interpretation</h3><p>Across ten random seeds, mean total cost per test SKU is:</p><table><thead><tr><th>Horizon</th><th>E2E</th><th>OPT oracle</th><th>PTO1</th><th>PTO2</th></tr></thead><tbody><tr><td>30 days</td><td>501.53</td><td>485.66</td><td>531.21</td><td>501.55</td></tr><tr><td>40 days</td><td>659.87</td><td>638.03</td><td>695.95</td><td>659.91</td></tr><tr><td>50 days</td><td>810.35</td><td>783.90</td><td>853.52</td><td>810.36</td></tr></tbody></table><p>E2E and PTO2 are nearly tied in this synthetic setup; PTO1 has higher mean cost. The setup varies demand variance and lead-time uncertainty as sensitivity exercises. These findings do not reproduce the paper’s reported E2E advantage: the demand structure is simple, and each review-period scenario is evaluated independently.</p>
+<h3>Limitations</h3><p>The notebook fixes initial inventory at zero and does not propagate inventory states or overlapping arrivals across consecutive orders. These simplifications can change both cost levels and policy rankings. A full reproduction would need the paper’s complete multi-period state transitions and implementation details. The oracle uses future realizations and must not be interpreted as a deployable forecast.</p></section><footer>Static HTML export from the saved Jupyter notebook. Figures are embedded; rerun the notebook in Google Colab to reproduce computations.</footer></main></body></html>

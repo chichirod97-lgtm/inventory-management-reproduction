@@ -1,0 +1,12 @@
+.ipynb_checkpoints/
+__pycache__/
+.env
+*.csv
+!author_package/*.csv
+!author_package/E2E-model-data/Data/*.csv
+/data/
+/content/
+/author_package/
+/notebooks/
+/html/
+/docs/author_package.html

@@ -1,0 +1,272 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>模拟 DID / Simulated DID Workflow</title><style>
+:root{color-scheme:light;--ink:#1f2937;--muted:#5b6573;--line:#d9dee7;--blue:#2457a7;--paper:#fff;--wash:#f5f7fa}
+*{box-sizing:border-box}body{margin:0;background:var(--wash);color:var(--ink);font:16px/1.62 system-ui,-apple-system,"Segoe UI","Noto Sans CJK SC",sans-serif}
+main{max-width:1000px;margin:28px auto;padding:40px 52px;background:var(--paper);box-shadow:0 2px 14px #15243b14;border-radius:12px}
+h1,h2,h3,h4{line-height:1.25;margin:1.5em 0 .6em}h1{margin-top:0;color:#17365f;border-bottom:2px solid var(--line);padding-bottom:.45em}h2{border-bottom:1px solid var(--line);padding-bottom:.3em}a{color:var(--blue)}p,li{max-width:88ch}blockquote{border-left:4px solid #9cb6dc;padding:.3em 1em;color:var(--muted);margin-left:0}
+pre{overflow:auto;background:#f2f4f8;border:1px solid var(--line);border-radius:7px;padding:14px;font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre}
+code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:#f0f2f5;padding:.08em .28em;border-radius:4px}.cell{border:1px solid var(--line);border-radius:8px;margin:16px 0;overflow:hidden}.cell-label{font-size:12px;color:var(--muted);background:#f7f8fa;padding:5px 12px;border-bottom:1px solid var(--line)}.cell pre{margin:0;border:0;border-radius:0}.output{padding:12px 16px;border-top:1px solid var(--line);overflow:auto}.output table{border-collapse:collapse;font-size:14px}.output th,.output td{border:1px solid var(--line);padding:5px 8px;text-align:left}.output img{max-width:100%;height:auto;display:block;margin:8px auto}.toc{display:flex;gap:12px;flex-wrap:wrap}.card{display:block;padding:16px;border:1px solid var(--line);border-radius:8px;background:white;text-decoration:none}.note{color:var(--muted);font-size:14px}footer{margin-top:36px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
+@media(max-width:700px){main{margin:0;padding:22px 16px;border-radius:0}body{font-size:15px}}
+</style></head><body><main><p><a href="index.html">← Project home</a></p><h1>模拟 DID：从识别假设到稳健性诊断</h1><h1>模拟 DID：从识别假设到稳健性诊断</h1>
+<h2>Goal</h2>
+<p>练习把一项库存管理政策评估组织成可审计的因果研究：先算四格 DID，再用单位与时间固定效应估计，检查事件研究的干预前趋势，并做一个仅使用干预前数据的 placebo。</p>
+<p>本 notebook 完全使用<strong>人为生成的面板数据</strong>。真实处理效应被设为 −5，目的是检查分析流程能否找回已知答案；这不是论文的京东估计，也不提供任何实际业务证据。</p>
+<h2>Context &amp; Methods</h2>
+<p>模拟 40 个门店、24 期数据，20 个门店从第 12 期开始采用政策。结果变量是库存成本指数，真实政策效应为 −5。模型为：</p>
+<p>Y_it = α_i + λ_t + β(Treated_i × Post_t) + ε_it</p>
+<ul>
+<li>α_i 控制不随时间变化的门店差异。</li>
+<li>λ_t 控制所有门店共同经历的时间冲击。</li>
+<li>标准误按门店聚类，以容许同一门店内的误差随时间相关。</li>
+<li>DID 的因果解释依赖平行趋势、无提前反应、无跨门店溢出和没有同时发生的差异化政策冲击。</li>
+</ul>
+<p>事件研究与 placebo 是诊断工具，不能证明平行趋势成立。</p>
+<h2>Steps 1–2: generate the controlled panel</h2>
+<p>先固定随机种子，再生成门店固定差异、共同时间冲击和门店内自相关误差。政策只影响处理组的干预后期，真实效应已知为 −5。</p>
+<section class="cell"><div class="cell-label">In [1]</div><pre><code>import numpy as np
+import pandas as pd
+
+try:
+    import matplotlib.pyplot as plt
+    HAS_MATPLOTLIB = True
+except ImportError:
+    HAS_MATPLOTLIB = False
+    print(&quot;Matplotlib unavailable; numerical analysis will run, figures are skipped.&quot;)
+
+SEED = 2042
+rng = np.random.default_rng(SEED)
+N_UNITS = 40
+N_PERIODS = 24
+TREATMENT_START = 12
+TRUE_EFFECT = -5.0
+N_TREATED = 20
+
+treated_units = set(rng.choice(N_UNITS, size=N_TREATED, replace=False).tolist())
+unit_effects = rng.normal(loc=0.0, scale=8.0, size=N_UNITS)
+common_shocks = rng.normal(loc=0.0, scale=0.8, size=N_PERIODS)
+time_effects = 0.25 * np.arange(N_PERIODS) + 1.5 * np.sin(np.arange(N_PERIODS) / 3) + common_shocks
+
+records = []
+for unit in range(N_UNITS):
+    treated = int(unit in treated_units)
+    serial_error = np.zeros(N_PERIODS)
+    innovations = rng.normal(loc=0.0, scale=1.5, size=N_PERIODS)
+    for period in range(N_PERIODS):
+        serial_error[period] = innovations[period] if period == 0 else 0.55 * serial_error[period - 1] + innovations[period]
+        post = int(period &gt;= TREATMENT_START)
+        did = treated * post
+        outcome = unit_effects[unit] + time_effects[period] + TRUE_EFFECT * did + serial_error[period]
+        records.append({
+            &quot;unit&quot;: unit,
+            &quot;period&quot;: period,
+            &quot;treated&quot;: treated,
+            &quot;post&quot;: post,
+            &quot;did&quot;: did,
+            &quot;outcome&quot;: outcome,
+        })
+
+panel = pd.DataFrame(records)
+print(&quot;Panel rows:&quot;, len(panel))
+print(&quot;Units:&quot;, panel[&quot;unit&quot;].nunique(), &quot;| periods:&quot;, panel[&quot;period&quot;].nunique())
+print(&quot;Treated units:&quot;, panel.loc[panel[&quot;treated&quot;] == 1, &quot;unit&quot;].nunique())
+print(&quot;Policy starts at period:&quot;, TREATMENT_START)
+</code></pre>
+<div class="output"><pre>Matplotlib unavailable; numerical analysis will run, figures are skipped.
+Panel rows: 960
+Units: 40 | periods: 24
+Treated units: 20
+Policy starts at period: 12
+</pre></div>
+</section>
+<h2>Step 3: calculate the four-cell DID</h2>
+<p>The arithmetic estimate is the change in treated units minus the change in controls. This is the most transparent first check and gives the coefficient the fixed-effects regression should recover in this balanced panel.</p>
+<section class="cell"><div class="cell-label">In [2]</div><pre><code>cell_means = (
+    panel.groupby([&quot;treated&quot;, &quot;post&quot;], as_index=False)[&quot;outcome&quot;]
+         .mean()
+         .pivot(index=&quot;treated&quot;, columns=&quot;post&quot;, values=&quot;outcome&quot;)
+)
+change_treated = cell_means.loc[1, 1] - cell_means.loc[1, 0]
+change_control = cell_means.loc[0, 1] - cell_means.loc[0, 0]
+did_four_cell = change_treated - change_control
+
+print(cell_means.rename(columns={0: &quot;Before&quot;, 1: &quot;After&quot;}))
+print(f&quot;Treated change: {change_treated:.3f}&quot;)
+print(f&quot;Control change: {change_control:.3f}&quot;)
+print(f&quot;Four-cell DID: {did_four_cell:.3f}&quot;)
+print(f&quot;Known simulated effect: {TRUE_EFFECT:.3f}&quot;)
+</code></pre>
+<div class="output"><pre>post       Before     After
+treated                    
+0        1.112637  3.334306
+1        0.902420 -1.176324
+Treated change: -2.079
+Control change: 2.222
+Four-cell DID: -4.300
+Known simulated effect: -5.000
+</pre></div>
+</section>
+<h2>Step 4: two-way fixed effects with clustered uncertainty</h2>
+<p>Treatment status is absorbed by unit fixed effects, and the post indicator is absorbed by time fixed effects. The coefficient of interest is the treated×post interaction. We calculate a CR1 cluster-robust covariance matrix by summing score contributions at the unit level.</p>
+<section class="cell"><div class="cell-label">In [3]</div><pre><code>def fit_clustered_ols(frame, outcome_name, focal_terms, cluster_name=&quot;unit&quot;):
+    unit_dummies = pd.get_dummies(frame[&quot;unit&quot;], prefix=&quot;unit&quot;, drop_first=True, dtype=float).to_numpy()
+    time_dummies = pd.get_dummies(frame[&quot;period&quot;], prefix=&quot;time&quot;, drop_first=True, dtype=float).to_numpy()
+    focal = frame[focal_terms].to_numpy(dtype=float)
+    x = np.column_stack([np.ones(len(frame)), focal, unit_dummies, time_dummies])
+    y = frame[outcome_name].to_numpy(dtype=float)
+
+    xtx_inverse = np.linalg.pinv(x.T @ x)
+    beta = xtx_inverse @ x.T @ y
+    residual = y - x @ beta
+
+    unique_clusters = frame[cluster_name].unique()
+    meat = np.zeros((x.shape[1], x.shape[1]), dtype=float)
+    for cluster in unique_clusters:
+        mask = frame[cluster_name].to_numpy() == cluster
+        score = x[mask].T @ residual[mask]
+        meat += np.outer(score, score)
+
+    n_obs, n_parameters = x.shape
+    n_clusters = len(unique_clusters)
+    correction = (n_clusters / (n_clusters - 1)) * ((n_obs - 1) / (n_obs - n_parameters))
+    covariance = correction * xtx_inverse @ meat @ xtx_inverse
+    standard_errors = np.sqrt(np.maximum(np.diag(covariance), 0.0))
+    return {
+        &quot;beta&quot;: beta,
+        &quot;se&quot;: standard_errors,
+        &quot;cov&quot;: covariance,
+        &quot;n_clusters&quot;: n_clusters,
+        &quot;n_obs&quot;: n_obs,
+        &quot;n_parameters&quot;: n_parameters,
+    }
+
+did_fit = fit_clustered_ols(panel, &quot;outcome&quot;, [&quot;did&quot;])
+did_estimate = did_fit[&quot;beta&quot;][1]
+did_se = did_fit[&quot;se&quot;][1]
+T_CRITICAL_39 = 2.0227  # two-sided 95% critical value for t with 39 degrees of freedom
+did_ci = (did_estimate - T_CRITICAL_39 * did_se, did_estimate + T_CRITICAL_39 * did_se)
+
+print(f&quot;TWFE DID estimate: {did_estimate:.3f}&quot;)
+print(f&quot;Unit-clustered SE: {did_se:.3f} (clusters={did_fit[&#x27;n_clusters&#x27;]})&quot;)
+print(f&quot;Approximate 95% cluster-t CI: [{did_ci[0]:.3f}, {did_ci[1]:.3f}]&quot;)
+print(f&quot;Known simulated effect: {TRUE_EFFECT:.3f}&quot;)
+print(&quot;Arithmetic and TWFE estimates match:&quot;, np.isclose(did_estimate, did_four_cell, atol=1e-9))
+</code></pre>
+<div class="output"><pre>TWFE DID estimate: -4.300
+Unit-clustered SE: 0.356 (clusters=40)
+Approximate 95% cluster-t CI: [-5.021, -3.580]
+Known simulated effect: -5.000
+Arithmetic and TWFE estimates match: True
+</pre></div>
+</section>
+<h2>Step 5: event-study pre-trend diagnostic</h2>
+<p>We omit event month −1 as the reference period and estimate treatment-group interactions for event months −8 through −2 and 0 through 11. Pre-policy coefficients should fluctuate around zero in this data-generating process. A noisy plot is a diagnostic; failure to reject a pre-trend is not proof that parallel trends holds.</p>
+<section class="cell"><div class="cell-label">In [4]</div><pre><code>event_panel = panel.copy()
+event_panel[&quot;event_time&quot;] = event_panel[&quot;period&quot;] - TREATMENT_START
+event_times = list(range(-8, -1)) + list(range(0, N_PERIODS - TREATMENT_START))
+event_terms = []
+for event_time in event_times:
+    term = f&quot;event_{event_time}&quot;
+    event_panel[term] = (
+        (event_panel[&quot;treated&quot;] == 1) &amp; (event_panel[&quot;event_time&quot;] == event_time)
+    ).astype(float)
+    event_terms.append(term)
+
+event_fit = fit_clustered_ols(event_panel, &quot;outcome&quot;, event_terms)
+event_rows = []
+for position, event_time in enumerate(event_times, start=1):
+    estimate = event_fit[&quot;beta&quot;][position]
+    standard_error = event_fit[&quot;se&quot;][position]
+    event_rows.append({
+        &quot;Event time&quot;: event_time,
+        &quot;Estimate&quot;: estimate,
+        &quot;Lower 95%&quot;: estimate - T_CRITICAL_39 * standard_error,
+        &quot;Upper 95%&quot;: estimate + T_CRITICAL_39 * standard_error,
+        &quot;SE&quot;: standard_error,
+    })
+event_table = pd.DataFrame(event_rows)
+print(event_table.round(3).to_string(index=False))
+
+if HAS_MATPLOTLIB:
+    fig, ax = plt.subplots(figsize=(10, 4.5))
+    ax.errorbar(
+        event_table[&quot;Event time&quot;],
+        event_table[&quot;Estimate&quot;],
+        yerr=[
+            event_table[&quot;Estimate&quot;] - event_table[&quot;Lower 95%&quot;],
+            event_table[&quot;Upper 95%&quot;] - event_table[&quot;Estimate&quot;],
+        ],
+        fmt=&quot;o&quot;,
+        color=&quot;#276FBF&quot;,
+        ecolor=&quot;#8AAED0&quot;,
+        capsize=2,
+    )
+    ax.axhline(0.0, color=&quot;#333333&quot;, linewidth=1)
+    ax.axvline(-0.5, color=&quot;#E3A018&quot;, linestyle=&quot;--&quot;, linewidth=1, label=&quot;Policy begins after event time −1&quot;)
+    ax.set(title=&quot;Event-study coefficients relative to event time −1&quot;, xlabel=&quot;Months from policy adoption&quot;, ylabel=&quot;Outcome effect&quot;)
+    ax.grid(axis=&quot;y&quot;, alpha=0.2)
+    ax.legend(frameon=False)
+    plt.tight_layout()
+    plt.show()
+</code></pre>
+<div class="output"><pre> Event time  Estimate  Lower 95%  Upper 95%    SE
+         -8     0.665     -0.745      2.075 0.697
+         -7     0.391     -1.098      1.879 0.736
+         -6    -0.412     -1.954      1.130 0.762
+         -5    -1.112     -2.475      0.252 0.674
+         -4    -0.836     -2.123      0.450 0.636
+         -3    -0.553     -1.777      0.672 0.605
+         -2    -0.677     -1.792      0.438 0.551
+          0    -5.390     -6.478     -4.303 0.538
+          1    -5.036     -6.352     -3.721 0.650
+          2    -4.563     -5.942     -3.183 0.682
+          3    -3.448     -4.696     -2.201 0.617
+          4    -4.006     -5.459     -2.553 0.718
+          5    -4.068     -5.552     -2.585 0.733
+          6    -4.816     -6.111     -3.521 0.640
+          7    -4.974     -6.346     -3.603 0.678
+          8    -4.331     -5.596     -3.065 0.626
+          9    -4.784     -6.066     -3.501 0.634
+         10    -4.283     -5.574     -2.992 0.638
+         11    -4.439     -5.702     -3.176 0.624
+</pre></div>
+</section>
+<h2>Step 6: placebo using only pre-policy periods</h2>
+<p>A fake intervention at period 6 is tested after dropping every actual post-policy observation. Since no treatment effect exists in the retained data, the placebo estimate should be near zero. This checks the mechanics and can expose obvious pre-policy differences, but a favorable placebo result does not establish the identifying assumptions.</p>
+<section class="cell"><div class="cell-label">In [5]</div><pre><code>pre_policy = panel.loc[panel[&quot;period&quot;] &lt; TREATMENT_START].copy()
+pre_policy[&quot;fake_post&quot;] = (pre_policy[&quot;period&quot;] &gt;= 6).astype(int)
+pre_policy[&quot;fake_did&quot;] = pre_policy[&quot;treated&quot;] * pre_policy[&quot;fake_post&quot;]
+placebo_fit = fit_clustered_ols(pre_policy, &quot;outcome&quot;, [&quot;fake_did&quot;])
+placebo_estimate = placebo_fit[&quot;beta&quot;][1]
+placebo_se = placebo_fit[&quot;se&quot;][1]
+placebo_ci = (
+    placebo_estimate - T_CRITICAL_39 * placebo_se,
+    placebo_estimate + T_CRITICAL_39 * placebo_se,
+)
+print(f&quot;Pre-policy placebo estimate: {placebo_estimate:.3f}&quot;)
+print(f&quot;Unit-clustered SE: {placebo_se:.3f}&quot;)
+print(f&quot;Approximate 95% cluster-t CI: [{placebo_ci[0]:.3f}, {placebo_ci[1]:.3f}]&quot;)
+</code></pre>
+<div class="output"><pre>Pre-policy placebo estimate: -0.827
+Unit-clustered SE: 0.513
+Approximate 95% cluster-t CI: [-1.865, 0.211]
+</pre></div>
+</section>
+<h2>Checks &amp; research interpretation</h2>
+<ul>
+<li>The four-cell DID and two-way fixed-effects coefficient should match in this balanced panel.</li>
+<li>The estimated policy effect should be reasonably close to the known −5, with uncertainty reflecting unit-level clustering.</li>
+<li>Inspect pre-policy event-study estimates and the pre-only placebo.</li>
+<li>State the treatment timing, control group, outcome, unit of analysis, and clustering level before interpreting any real estimate.</li>
+<li>In an applied study, also investigate treatment selection, spillovers, simultaneous interventions, missing outcomes, alternative controls and sensitivity to the event window.</li>
+</ul>
+<p>The simulation has deliberately favorable parallel trends. Real applications do not reveal the counterfactual. Pre-trend plots, placebo outcomes and robustness checks support scrutiny but cannot prove the DID assumptions.</p>
+<section class="cell"><div class="cell-label">In [6]</div><pre><code>assert np.isclose(did_estimate, did_four_cell, atol=1e-9)
+assert abs(did_estimate - TRUE_EFFECT) &lt; 2.0
+assert len(event_table) == len(event_times)
+assert np.isfinite(event_table[[&quot;Estimate&quot;, &quot;SE&quot;]].to_numpy()).all()
+print(&quot;Synthetic DID mechanics checks passed.&quot;)
+print(f&quot;Estimate {did_estimate:.3f} vs known effect {TRUE_EFFECT:.1f}; placebo {placebo_estimate:.3f}.&quot;)
+</code></pre>
+<div class="output"><pre>Synthetic DID mechanics checks passed.
+Estimate -4.300 vs known effect -5.0; placebo -0.827.
+</pre></div>
+</section><section class="english-companion"><h2>English Version — Simulated Difference-in-Differences Workflow</h2><p>This notebook demonstrates how to organize a causal analysis of an inventory policy: calculate the four-cell DID, estimate a two-way fixed-effects model, inspect an event study, and run a placebo using only pre-policy data. All observations are artificially generated. The known treatment effect is −5; the simulation is not an estimate of the paper’s JD.com effect or evidence about a real business.</p><p>The panel contains 40 stores over 24 periods; 20 stores receive the policy from period 12. The outcome is a simulated inventory-cost index. The model is Y_it = α_i + λ_t + β(Treated_i × Post_t) + ε_it. Standard errors are clustered by store to allow within-store serial correlation. Causal interpretation in real applications requires assumptions including parallel trends, no anticipation, no spillovers, and no concurrent differential shocks. Event studies and placebo tests are diagnostics, not proof of these assumptions.</p><p>The four-cell DID and two-way fixed-effects estimate are both −4.300. The store-clustered standard error is 0.356 and the approximate 95% confidence interval is [−5.021, −3.580], compared with the known simulated effect of −5.000. The pre-policy placebo estimate is −0.827 with an approximate 95% interval [−1.865, 0.211]. The simulation uses deliberately favorable parallel trends; real applications do not reveal the counterfactual.</p></section><footer>Static HTML export from the saved Jupyter notebook. Figures are embedded; rerun the notebook in Google Colab to reproduce computations.</footer></main></body></html>
