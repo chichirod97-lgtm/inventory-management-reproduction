@@ -1,16 +1,17 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>端到端库存管理 / End-to-End Inventory Management</title>
-<style>body{margin:0;background:#f4f6fa;color:#202b3a;font:16px/1.65 system-ui,"Segoe UI","Noto Sans CJK SC",sans-serif}main{max-width:900px;margin:32px auto;padding:36px 42px;background:white;border-radius:12px;box-shadow:0 2px 14px #15243b14}h1{color:#17365f;border-bottom:2px solid #d9dee7;padding-bottom:.5em}.toc{display:grid;gap:12px;margin:24px 0}.card{display:block;padding:16px;border:1px solid #d9dee7;border-radius:8px;color:#2457a7;text-decoration:none}.note{color:#5b6573;font-size:14px}footer{margin-top:30px;border-top:1px solid #d9dee7;padding-top:12px;color:#5b6573;font-size:13px}@media(max-width:700px){main{margin:0;padding:24px 16px;border-radius:0}}</style></head><body><main>
-<h1>端到端库存管理：学习型复现</h1>
-<p>本项目围绕论文 <em>A Practical End-to-End Inventory Management Model with Deep Learning</em>，发布合成实验、M5 方法扩展和 DID 流程演示的双语 HTML 报告。这些材料用于方法学习，不声称精确复现论文的全部结果。</p>
-<h1>End-to-End Inventory Management: A Learning Reproduction</h1>
-<p>This project studies <em>A Practical End-to-End Inventory Management Model with Deep Learning</em> and publishes bilingual HTML reports for a synthetic experiment, an M5-based methodological extension, and a DID workflow demonstration. These materials are for learning methods and do not claim an exact reproduction of every result in the paper.</p>
+<style>body{margin:0;background:#f4f6fa;color:#202b3a;font:16px/1.65 system-ui,"Segoe UI","Noto Sans CJK SC",sans-serif}main{max-width:920px;margin:32px auto;padding:36px 42px;background:white;border-radius:12px;box-shadow:0 2px 14px #15243b14}h1{color:#17365f;border-bottom:2px solid #d9dee7;padding-bottom:.5em}.toc{display:grid;gap:12px;margin:24px 0}.card{display:block;padding:16px;border:1px solid #d9dee7;border-radius:8px;color:#2457a7;text-decoration:none}.note{color:#5b6573;font-size:14px}.status{border-left:5px solid #b54708;background:#fff4e5;padding:16px 20px;border-radius:6px;margin:20px 0}footer{margin-top:30px;border-top:1px solid #d9dee7;padding-top:12px;color:#5b6573;font-size:13px}@media(max-width:700px){main{margin:0;padding:24px 16px;border-radius:0}}</style></head><body><main>
+<h1>端到端库存管理：作者数据包复现审计</h1>
+<p>本项目围绕论文 <em>A Practical End-to-End Inventory Management Model with Deep Learning</em>。首先报告作者 ZIP 的样本级重算与论文发表结果的对照，其余页面是方法学习练习。</p>
+<h1>End-to-End Inventory Management: Audit of the Author Package</h1>
+<p>This project studies <em>A Practical End-to-End Inventory Management Model with Deep Learning</em>. The first report compares recalculations on the author ZIP’s samples with published results; the other pages are methodological learning exercises.</p>
+<div class="status"><strong>复现状态 / Replication status</strong><br>目前不能声称已精确复现论文全部结果。作者 ZIP 中的抽样数据不足以重建完整模型训练和大规模现场实验。 / An exact reproduction of all paper results has not been achieved. The sampled data in the author ZIP are insufficient to reconstruct the full model training and large-scale field experiment.</div>
 <div class="toc">
-<a class="card" href="01_appendix_b_synthetic_replication.html"><strong>01 — 附录 B 合成实验 / Appendix B Synthetic Experiment</strong><br><span class="note">方法、基准策略、主要结果与复现边界 / Methods, benchmark policies, key results, and reproduction limits</span></a>
-<a class="card" href="02_m5_inventory_experiment.html"><strong>02 — M5 库存实验 / M5 Inventory Experiment</strong><br><span class="note">公开销量、模拟交期、多周期策略比较 / Public sales, simulated lead times, and multi-period policy comparison</span></a>
-<a class="card" href="03_simulated_did_research_workflow.html"><strong>03 — DID 模拟 / Simulated DID Workflow</strong><br><span class="note">已知处理效果、固定效应和诊断 / Known treatment effect, fixed effects, and diagnostics</span></a>
-
+<a class="card" href="00_author_package_reproduction.html"><strong>00 — ZIP 复现审计 / ZIP Replication Audit</strong><br><span class="note">作者包的样本、可复算输出、发表结果对照和缺失材料 / Package samples, reproducible outputs, comparison with published results, and missing materials</span></a>
+<a class="card" href="01_appendix_b_synthetic_replication.html"><strong>01 — 附录 B 合成方法练习 / Appendix B Synthetic-Method Exercise</strong><br><span class="note">合成数据、基准策略、结果与偏离原文之处 / Synthetic data, benchmark policies, results, and departures from the paper</span></a>
+<a class="card" href="02_m5_inventory_experiment.html"><strong>02 — M5 库存策略扩展 / M5 Inventory-Policy Extension</strong><br><span class="note">公开销量与模拟库存假设 / Public sales with simulated inventory assumptions</span></a>
+<a class="card" href="03_simulated_did_research_workflow.html"><strong>03 — DID 模拟流程 / Simulated DID Workflow</strong><br><span class="note">已知处理效果、固定效应和诊断 / Known treatment effect, fixed effects, and diagnostics</span></a>
 </div>
 <p><a href="../README.md">项目说明 / Project README</a></p>
-<footer>本页面为中英双语。作者提供的原始数据包和源 Notebook 不包含在此公开仓库中。 / This page is in Chinese and English. The authors’ original data package and source notebooks are not included in this public repository.</footer>
+<footer>本页面为中英双语。公开仓库不含作者原始数据和源 Notebook。 / This page is in Chinese and English. The public repository does not include the authors’ raw data or source notebooks.</footer>
 </main></body></html>

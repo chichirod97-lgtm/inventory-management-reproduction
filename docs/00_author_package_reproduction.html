@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>作者数据包复现审计 / Author-Package Replication Audit</title>
+<style>
+:root{--ink:#202b3a;--muted:#5b6573;--line:#d9dee7;--blue:#2457a7;--paper:#fff;--wash:#f4f6fa;--warn:#8a3b12}
+*{box-sizing:border-box}body{margin:0;background:var(--wash);color:var(--ink);font:16px/1.65 system-ui,"Segoe UI","Noto Sans CJK SC",sans-serif}
+main{max-width:1040px;margin:28px auto;padding:38px 48px;background:var(--paper);border-radius:12px;box-shadow:0 2px 14px #15243b14}
+h1,h2,h3{line-height:1.25}h1{color:#17365f;border-bottom:2px solid var(--line);padding-bottom:.45em;margin-top:0}h2{margin-top:2em;border-bottom:1px solid var(--line);padding-bottom:.3em}a{color:var(--blue)}p,li{max-width:92ch}.alert{background:#fff4e5;border-left:5px solid #b54708;padding:16px 20px;border-radius:6px;margin:20px 0}.good{background:#edf7ed;border-left:5px solid #218739;padding:14px 18px;border-radius:6px}.bad{background:#fff4e5;border-left:5px solid #b54708;padding:14px 18px;border-radius:6px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;margin:14px 0;font-size:14px}th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;white-space:nowrap}th{background:#f0f3f8}code{font-family:Consolas,monospace;background:#f0f2f5;padding:.08em .28em;border-radius:4px}.sub{color:var(--muted);font-size:14px}.section{padding-bottom:6px}.english{border-top:4px solid #d9dee7;margin-top:40px;padding-top:26px}footer{margin-top:34px;padding-top:12px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}@media(max-width:700px){main{margin:0;padding:22px 16px;border-radius:0}body{font-size:15px}}
+</style>
+</head>
+<body><main>
+<p><a href="index.html">← Project home</a></p>
+<h1>作者 ZIP 数据包：复现审计</h1>
+<div class="alert"><strong>结论：</strong>ZIP 足以重新计算若干已提供样本上的作者分析结果，但不足以精确重现论文报告的全部实验结果。本文明确区分“复算 ZIP 样本”和“精确复现论文”。</div>
+
+<section class="section">
+<h2>1. ZIP 中有什么</h2>
+<p>已检查你提供的作者复现包及其原始 README。主要内容包括：</p>
+<ul>
+<li><code>df_test.csv</code>：3,000 个 SKU 的随机抽样离线测试数据，文件内包含作者模型/基准的决策或预测输出。README 说明完整原始数据规模过大，未全部发布。</li>
+<li>四个实验 CSV：处理组和对照组各 500 对 SKU/DC 的实验前、实验后样本。</li>
+<li><code>control_demand_vlt.csv</code>：用于构造候选对照组的需求和供应商提前期变量。</li>
+<li>三个作者 Notebook：离线 E2E 分析、现场实验汇总、倾向得分匹配。</li>
+<li>少量脱敏示例数据：每日销售、一个月库存和供应商提前期示例。</li>
+</ul>
+<p>在该 ZIP 中没有找到完整模型训练代码、全量运营记录或所有已训练模型权重。因此，Notebook 中的部分模型结果来自已提供的预测/决策字段，不能从原始训练流程重新生成。</p>
+</section>
+
+<section class="section">
+<h2>2. 离线实验：样本计算与论文 Figure 2</h2>
+<p>我们重新运行了作者的 <code>E2E_Section4</code> Notebook，并用 ZIP 中的 3,000-SKU <code>df_test.csv</code> 重算持有成本、缺货成本和总成本。重算表与作者 Notebook 随包保存的对应输出一致；但它与本项目所用论文 PDF 的 Figure 2 数值不同。</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Method</th><th>Provided article PDF, Figure 2</th><th>Recomputed on ZIP sample</th></tr></thead>
+<tbody>
+<tr><td>OPT</td><td>3022.60</td><td>2572.96</td></tr>
+<tr><td>E2E RNN</td><td>3766.52</td><td>3036.76</td></tr>
+<tr><td>BM1 / PTO1</td><td>4207.09</td><td>3842.31</td></tr>
+<tr><td>BM2 / PTO2</td><td>4157.03</td><td>3837.83</td></tr>
+<tr><td>Normal</td><td>4576.05</td><td>3961.69</td></tr>
+<tr><td>Gamma</td><td>4476.17</td><td>4099.95</td></tr>
+<tr><td>E2E GBM</td><td>4017.82</td><td>3424.87</td></tr>
+</tbody></table></div>
+<p class="sub">单位沿用论文和作者 Notebook 的成本单位。你提供的论文 PDF（第 7–8 页）说明 Figure 2 使用食品与零食类别的 24,333 个 SKU；ZIP README 则说明 <code>df_test.csv</code> 是 3,000 个 SKU 的随机子样本。由于样本、模型输入/输出和完整训练材料不齐，不能把左、右两列当成同一全量实验的完全一致结果，也不能仅凭这些差值推断具体原因。</p>
+<div class="good"><strong>可以准确声称：</strong>我们用作者原始分析 Notebook 对 ZIP 中可用的 3,000-SKU 文件重新计算，并复现了该 Notebook 在此样本上的保存输出。<br><strong>不能声称：</strong>我们精确复现了论文 Figure 2 的全量数值或作者模型训练。</div>
+</section>
+
+<section class="section">
+<h2>3. 现场实验：500 对抽样数据与论文 Table 2</h2>
+<p>你提供的论文 PDF Table 2 报告实验后平均总成本为处理组 1,094.54、对照组 1,837.47；论文第 7 页说明现场实验包含 61,430 个订单、9,308 个 SKU，处理组和对照组各使用 6,097 对 SKU/DC。作者 README 说明 ZIP 中现场实验文件只是每组 500 对 SKU/DC 的随机子样本。用这些文件重新汇总得到的实验后总成本为处理组 884.09、对照组 1,985.15。它们不等于论文全量表格结果。</p>
+<div class="table-wrap"><table><thead><tr><th>实验后总成本</th><th>处理组</th><th>对照组</th><th>数据范围</th></tr></thead>
+<tbody><tr><td>论文 Table 2</td><td>1094.54</td><td>1837.47</td><td>论文报告的完整现场实验汇总</td></tr>
+<tr><td>ZIP 样本重算</td><td>884.09</td><td>1985.15</td><td>每组 500 对 SKU/DC 的抽样文件</td></tr></tbody></table></div>
+<p>此外，重新运行作者 DID 汇总 Notebook 后，个别 DID 检验统计量与 Notebook 文件内保存的输出存在差异。因此，不能把当前样本汇总描述为论文现场实验的精确统计复现。</p>
+</section>
+
+<section class="section">
+<h2>4. 为什么目前不能完成“全文精确复现”</h2>
+<ol>
+<li>关键离线文件是 3,000-SKU 抽样数据，而论文报告的是 24,333-SKU 实验。</li>
+<li>现场实验文件是每组 500 对 SKU/DC 的抽样数据，不是论文完整实验记录。</li>
+<li>ZIP 未提供完整训练样本、完整训练代码和所有模型权重；有些模型预测已经作为字段提供。</li>
+<li>重新运行现场实验 Notebook 时，个别 DID 检验统计量与保存输出不同，尚不能据此确认逐项完全一致。</li>
+</ol>
+<p>要完成论文层面的精确复现，至少还需要与论文版本对应的完整分析输入、模型训练实现/权重、确定性随机种子及完整评估流程。如果作者/期刊不提供这些材料，准确的研究结论应是“基于公开抽样包的部分复算”，并明确报告不可复现的部分。</p>
+</section>
+
+<section class="section">
+<h2>5. 其余项目页面的定位</h2>
+<p>附录 B 合成实验、M5 库存扩展和模拟 DID 页面用于练习方法和研究工作流程。它们不是作者 ZIP 上的论文结果复现，也不能替代精确复现。M5 未提供真实库存与供应商提前期，所以相应变量为模拟设定；模拟 DID 的真实处理效应是人为设定的。</p>
+</section>
+
+<section class="section">
+<h2>Sources</h2>
+<ul>
+<li><a href="https://doi.org/10.1287/mnsc.2022.4564">Published article record, Management Science</a></li>
+<li>Figure 2 and Table 2 values were checked against the article PDF supplied for this project; the DOI link above identifies the published article.</li>
+<li><a href="https://pubsonline.informs.org/doi/suppl/10.1287/mnsc.2022.4564">INFORMS supplemental-material page</a></li>
+</ul>
+</section>
+
+<section class="english">
+<h1>Author ZIP Package: Replication Audit</h1>
+<div class="alert"><strong>Conclusion:</strong> The ZIP is sufficient to recompute some author analyses on the supplied samples, but it is insufficient to reproduce every reported experiment in the paper exactly. This report separates “recomputing the ZIP sample” from “exactly reproducing the paper.”</div>
+
+<h2>1. What the ZIP contains</h2>
+<p>We inspected the author package you supplied and its original README. Its main contents are:</p>
+<ul>
+<li><code>df_test.csv</code>: a random 3,000-SKU offline test sample containing author-model and benchmark decisions or predictions. The README says the complete original dataset was too large to release.</li>
+<li>Four field-experiment CSV files: pre- and post-period samples of 500 SKU/DC pairs each for treatment and control.</li>
+<li><code>control_demand_vlt.csv</code>: demand and vendor-lead-time variables for candidate controls.</li>
+<li>Three author notebooks: offline E2E analysis, field-experiment summary, and propensity-score matching.</li>
+<li>Small anonymized examples for daily sales, one month of inventory, and vendor lead time.</li>
+</ul>
+<p>The ZIP does not contain the complete model-training code, full operational records, or all trained model weights. Some model results are therefore read from supplied prediction/decision fields rather than regenerated from the original training pipeline.</p>
+
+<h2>2. Offline experiment: sample calculation versus paper Figure 2</h2>
+<p>We reran the authors’ <code>E2E_Section4</code> notebook and recalculated holding, stockout, and total costs from the ZIP’s 3,000-SKU <code>df_test.csv</code>. The recalculated table agrees with the corresponding output saved in the authors’ notebook, but differs from Figure 2 in the article PDF supplied for this project.</p>
+<div class="table-wrap"><table><thead><tr><th>Method</th><th>Provided article PDF, Figure 2</th><th>Recomputed on ZIP sample</th></tr></thead><tbody>
+<tr><td>OPT</td><td>3022.60</td><td>2572.96</td></tr><tr><td>E2E RNN</td><td>3766.52</td><td>3036.76</td></tr><tr><td>BM1 / PTO1</td><td>4207.09</td><td>3842.31</td></tr><tr><td>BM2 / PTO2</td><td>4157.03</td><td>3837.83</td></tr><tr><td>Normal</td><td>4576.05</td><td>3961.69</td></tr><tr><td>Gamma</td><td>4476.17</td><td>4099.95</td></tr><tr><td>E2E GBM</td><td>4017.82</td><td>3424.87</td></tr>
+</tbody></table></div>
+<p class="sub">Cost units follow the article and author notebook. The supplied article PDF (pp. 7–8) says Figure 2 uses 24,333 SKUs from the Food &amp; Snack category; the ZIP README describes <code>df_test.csv</code> as a random sample of 3,000 SKUs. Because the sample and complete training inputs are unavailable, the two columns cannot be treated as identical full-scale experiments, and the differences alone do not identify their cause.</p>
+<div class="good"><strong>Accurate claim:</strong> We reran the authors’ original analysis notebook on the available 3,000-SKU ZIP file and reproduced that notebook’s saved output for this sample.<br><strong>Unsupported claim:</strong> We exactly reproduced the full-sample values in paper Figure 2 or the authors’ model training.</div>
+
+<h2>3. Field experiment: sampled 500 pairs versus paper Table 2</h2>
+<p>Table 2 in the supplied article PDF reports post-period mean total costs of 1,094.54 for treatment and 1,837.47 for control. Page 7 says the field experiment involved 61,430 orders and 9,308 SKUs, with 6,097 SKU/DC pairs in each of the treatment and control groups. The author README describes the ZIP field-experiment files as random samples of 500 SKU/DC pairs per group. Re-aggregating those files gives post-period total costs of 884.09 for treatment and 1,985.15 for control. These do not equal the paper’s full-experiment table.</p>
+<div class="table-wrap"><table><thead><tr><th>Post-period total cost</th><th>Treatment</th><th>Control</th><th>Data scope</th></tr></thead><tbody>
+<tr><td>Paper Table 2</td><td>1094.54</td><td>1837.47</td><td>Full field-experiment summary reported in the paper</td></tr>
+<tr><td>ZIP-sample recalculation</td><td>884.09</td><td>1985.15</td><td>Sampled files with 500 SKU/DC pairs per group</td></tr>
+</tbody></table></div>
+<p>In addition, after rerunning the authors’ DID-summary notebook, some DID test statistics differ from the outputs saved in the notebook file. The current sample summary therefore cannot be described as an exact statistical reproduction of the paper’s field experiment.</p>
+
+<h2>4. Why an exact reproduction of the whole paper is not yet possible</h2>
+<ol>
+<li>The key offline file is a 3,000-SKU sample, while the paper reports an experiment on 24,333 SKUs.</li>
+<li>The field-experiment files sample 500 SKU/DC pairs per group rather than providing all records used in the paper.</li>
+<li>The ZIP lacks full training samples, complete training code, and all model weights; some model predictions are supplied as data fields.</li>
+<li>When the field-experiment notebook is rerun, some DID test statistics differ from its saved outputs, so item-by-item exact agreement is not established.</li>
+</ol>
+<p>An exact reproduction at the paper level would require the complete analysis inputs corresponding to the published version, the model-training implementation and weights, deterministic random seeds, and the full evaluation pipeline. If the authors or journal do not provide these materials, the accurate conclusion is “partial recalculation using the public sample package,” with unreproducible parts explicitly documented.</p>
+
+<h2>5. How to interpret the other project pages</h2>
+<p>The Appendix B synthetic exercise, M5 inventory extension, and simulated DID page are for learning methods and research workflow. They are not reproductions of the paper’s results using the author ZIP and cannot substitute for exact reproduction. M5 does not provide real inventory or supplier lead times, so those variables are simulated; the simulated DID uses an artificially assigned true treatment effect.</p>
+
+<h2>Sources</h2>
+<ul><li><a href="https://doi.org/10.1287/mnsc.2022.4564">Published article record, Management Science</a></li><li>Figure 2 and Table 2 values were checked against the article PDF supplied for this project; the DOI link above identifies the published article.</li><li><a href="https://pubsonline.informs.org/doi/suppl/10.1287/mnsc.2022.4564">INFORMS supplemental-material page</a></li></ul>
+</section>
+<footer>Static HTML report in Chinese and English. Raw author data and source notebooks are not included in this public repository.</footer>
+</main></body></html>
