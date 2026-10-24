@@ -1,17 +1,3 @@
-# 课程作业 / Coursework
-
-## 随机交付库存问题：部分复现与损失函数扩展（2026-10-24）
-
-**本次作业：[中文HTML完整报告](docs/04_random_yield_inventory/index.html)** · [目录与运行说明](docs/04_random_yield_inventory/README.md)
-
-论文：Yan, Chen, Fu & Bi, *Computers & Operations Research* 186 (2026), 107305。24组配置、3个种子的部分复现与平均损失扩展，附汇总数据、代码与检查证据。不是下列另一篇文章的复现，也不声称完整复现432实例。
-
-HTML可下载后用浏览器直接打开；GitHub Pages若使用main分支的docs目录，页面路径为 `/inventory-management-reproduction/04_random_yield_inventory/`，是否部署以Pages实际状态为准。
-
----
-
-## 其他既有学习材料
-
 # 端到端库存管理：复现审计与学习材料 / End-to-End Inventory Management: Replication Audit and Learning Materials
 
 ## 重要结论 / Important finding
